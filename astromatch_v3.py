@@ -230,14 +230,36 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     st.session_state['res_df'] = res_df
     st.session_state['target_env'] = target_env
 
- # --- Profile Layout ---
+# --- SITE PROFILE ---
+    st.subheader("🔍 Detailed Site Profile")
+    
+    # 1. THESE ARE THE MISSING LINES: Get the selected site and its data
+    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
+    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
+    
+    # 2. Dynamic Verdict
+    strong, mod, weak = [], [], []
+    for p in active_params:
+        val = site_data.get(f"{p} Fit", "N/A")
+        if val not in ["N/A", "Off/NA"]:
+            if float(val) >= 0.7: strong.append(p)
+            elif float(val) >= 0.4: mod.append(p)
+            else: weak.append(p)
+    
+    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
+    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
+    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
+    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
+    
+    st.info(verdict)
+    
+    # --- Profile Layout ---
     st.write("### Analogue Footprint vs Target")
     
     # Convert the Pandas Series to a pure Python dictionary ONCE for the whole section
-    # This protects the Radar Chart, the Table, AND the Map from KeyErrors
     site_dict = site_data.to_dict()
     
-    # 1. RADAR CHART (Full Width / Prominent)
+    # 3. RADAR CHART (Full Width / Prominent)
     categories = active_params
     r_vals = []
     
@@ -267,14 +289,13 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
 
     st.divider()
 
-    # 2. TABLE AND MAP (Side-by-Side underneath)
+    # 4. TABLE AND MAP (Side-by-Side underneath)
     c1, c2 = st.columns(2)
     
     with c1:
         st.write("### Parameter Breakdown")
         breakdown_data = []
         for p in active_params:
-            # Use the safe .get() method here too!
             breakdown_data.append({
                 "Parameter": p,
                 "Fidelity": site_dict.get(f"{p} Fit", "N/A"),
@@ -284,7 +305,6 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
 
     with c2:
         st.write("### Global Location")
-        # Safely check for coordinates
         if pd.notna(site_dict.get('lat')) and pd.notna(site_dict.get('lon')):
             map_df = pd.DataFrame({"lat": [site_dict['lat']], "lon": [site_dict['lon']], "Site": [selected_site]})
             fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
