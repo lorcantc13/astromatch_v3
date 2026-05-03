@@ -44,27 +44,38 @@ def calculate_suitability(site_min, site_max, target_min, target_max):
 # --- 4. SIDEBAR: WEIGHTING & VISUALS ---
 st.sidebar.header("🎯 Importance Weights")
 st.sidebar.info("Toggle parameters and adjust influence (1-10)")
+st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v2/tree/main/documentation)**")
+st.sidebar.write("") # Adds space before the toggles start
 
 params_config = {
     "Temperature": {"color": "#EF553B", "default": 5, "col_prefix": "T"},
-    "Salinity": {"color": "#00CC96", "default": 5, "col_prefix": "Sal"},
-    "pH": {"color": "#636EFA", "default": 5, "col_prefix": "pH"},
+    "Salinity": {"color": "#F5F5F5", "default": 5, "col_prefix": "Sal"},
+    "pH": {"color": "#00CC96", "default": 5, "col_prefix": "pH"},
     "Pressure": {"color": "#AB63FA", "default": 5, "col_prefix": "Pres"},
-    "Isolation": {"color": "#FFA15A", "default": 5, "col_prefix": "Iso", "help": "Derived from Physical Confinement, Hydrologic Connectivity, and Isolation Time rubrics."},
-    "Redox": {"color": "#19D3F3", "default": 5, "col_prefix": "Redox", "help": "Derived from Evidence of Reductants, Oxidants, and Metabolic Equilibrium rubrics."}
+    "Isolation": {"color": "#6ab7f1", "default": 5, "col_prefix": "Iso"},
+    "Redox Potential": {"color": "#FF8C00", "default": 5, "col_prefix": "Redox"}
 }
 
 user_weights = {}
 active_params = []
 
 for name, info in params_config.items():
-    st.sidebar.markdown(f"**<span style='color:{info['color']}'>{name}</span>**", unsafe_allow_html=True)
+    # Create two columns: one for the title (wider), one for the toggle (narrower)
+    col_title, col_toggle = st.sidebar.columns([4, 1])
     
-    if "help" in info:
-        st.sidebar.caption(f"ℹ️ {info['help']}")
-        
-    is_on = st.sidebar.toggle(f"Include {name}", value=True, key=f"tog_{name}")
+    with col_title:
+        st.markdown(f"**<span style='color:{info['color']}'>{name}</span>**", unsafe_allow_html=True)
+        if "help" in info:
+            st.caption(f"ℹ️ {info['help']}")
+            
+    with col_toggle:
+        # Use an empty string for the label and collapse visibility to remove the text entirely
+        is_on = st.toggle(" ", value=True, key=f"tog_{name}", label_visibility="collapsed")
+    
+    # Put the slider directly underneath
     val = st.sidebar.slider(f"{name} Weight", 1, 10, info['default'], label_visibility="collapsed", key=f"sld_{name}", disabled=not is_on)
+    
+    st.sidebar.write("") # Adds breathing room between parameters
     
     if is_on:
         user_weights[name] = val
