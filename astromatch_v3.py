@@ -121,7 +121,6 @@ with st.expander("🛠 Advanced Options"):
     st.markdown("**Import Custom Analogue Site**")
     st.info("Upload a CSV with your own analogue data. It will be temporarily added to the analysis for this session.")
     
-    # Generate the expected template structure dynamically
     template_cols = ['Site', 'lat', 'lon']
     for p_info in params_config.values():
         prefix = p_info['col_prefix']
@@ -144,8 +143,9 @@ with st.expander("🛠 Advanced Options"):
     if uploaded_file:
         try:
             custom_sites_df = pd.read_csv(uploaded_file)
-            custom_sites_df['User_Supplied'] = True # Tag for flagging system
-            st.success(f"Successfully loaded {len(custom_sites_df)} custom site(s)!")
+            custom_sites_df.columns = custom_sites_df.columns.str.strip() # Strip accidental spaces
+            custom_sites_df['User_Supplied'] = True 
+            st.success(f"✅ Successfully loaded {len(custom_sites_df)} custom site(s)! Click 'Run Analysis' below to update the dashboard.")
         except Exception as e:
             st.error(f"Error reading file: {e}")
 
@@ -156,7 +156,6 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     target_data = targets_df[targets_df['Target_env'] == target_env].iloc[0]
     results = []
     
-    # Combine original data with custom uploaded data
     working_analogues = analogues_df.copy()
     if not custom_sites_df.empty:
         working_analogues = pd.concat([working_analogues, custom_sites_df], ignore_index=True)
@@ -169,11 +168,9 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
         active_site_weights = {}
         flags = []
         
-        # Check if site is user supplied
         if site.get('User_Supplied') == True:
             flags.append("⚠️ User-Supplied Data")
         
-        # Calculate Fits and Handle Missing Data
         for param in active_params:
             prefix = params_config[param]['col_prefix']
             
@@ -188,7 +185,10 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
             
             if fit is not None:
                 site_fits[param] = fit
-                site_rels[param] = site.get(rel_col, 1) # Default to low rel if missing
+                try:
+                    site_rels[param] = float(site.get(rel_col, 1))
+                except (ValueError, TypeError):
+                    site_rels[param] = 1.0 # Default to lowest reliability if bad data
                 active_site_weights[param] = user_weights[param]
             else:
                 weight_pct = user_weights[param] / w_sum_total
@@ -221,7 +221,7 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
         alert_str = " | ".join(set(flags)) if flags else "✅ Reliable"
 
         res_dict = {
-            "Site": site['Site'],
+            "Site": str(site.get('Site', 'Unknown Site')),
             "Suitability": round(final_score, 4),
             "Confidence": round(conf_score, 2),
             "Alerts": alert_str,
@@ -241,21 +241,39 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     st.session_state['res_df'] = res_df
     st.session_state['target_env'] = target_env
 
-# --- SITE PROFILE ---
-    st.subheader("🔍 Detailed Site Profile")
+# --- 7. RESULTS DASHBOARD ---
+if 'res_df' in st.session_state:
+    res_df = st.session_state['res_df']
     
-    # 1. THESE ARE THE MISSING LINES: Get the selected site and its data
+    st.subheader("🏆 Site Rankings")
+    
+    display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
+    st.dataframe(
+        res_df.head(5)[display_cols].style.background_gradient(subset=['Suitability'], cmap="Blues"), 
+        use_container_width=True
+    )
+    
+    with st.expander("View all sites"):
+        st.dataframe(res_df[display_cols], use_container_width=True)
+        
+    st.divider()
+    
+    
+st.subheader("🔍 Detailed Site Profile")
     selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
+    
     site_data = res_df[res_df['Site'] == selected_site].iloc[0]
     
-    # 2. Dynamic Verdict
+    # Bulletproof Dynamic Verdict Extraction
     strong, mod, weak = [], [], []
     for p in active_params:
-        val = site_data.get(f"{p} Fit", "N/A")
-        if val not in ["N/A", "Off/NA"]:
-            if float(val) >= 0.7: strong.append(p)
-            elif float(val) >= 0.4: mod.append(p)
+        try:
+            val = float(site_data[f"{p} Fit"])
+            if val >= 0.7: strong.append(p)
+            elif val >= 0.4: mod.append(p)
             else: weak.append(p)
+        except (ValueError, TypeError):
+            pass # Ignore strings or N/A
     
     verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
     if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
@@ -264,64 +282,61 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     
     st.info(verdict)
     
-    # --- Profile Layout ---
-    st.write("### Analogue Footprint vs Target")
-    
-    # Convert the Pandas Series to a pure Python dictionary ONCE for the whole section
-    site_dict = site_data.to_dict()
-    
-    # 3. RADAR CHART (Full Width / Prominent)
+    # --- Full-Width Radar Chart ---
+    st.write("### Radar Chart Footprint")
     categories = active_params
-    r_vals = []
     
+    # Bulletproof Radar Chart Extraction
+    r_vals = []
     for p in categories:
-        col_name = f"{p} Fit"
-        val = site_dict.get(col_name, 0)
-        
-        # Safely handle numbers, and ignore our "N/A" or "Off/NA" text flags
-        if pd.notna(val) and not isinstance(val, str):
-            r_vals.append(float(val))
-        else:
-            r_vals.append(0)
-            
+        try:
+            r_vals.append(float(site_data[f"{p} Fit"]))
+        except (ValueError, TypeError):
+            r_vals.append(0.0) # Flatline missing data to prevent crash
+    
     fig_radar = go.Figure()
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
     fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
     
-    # Make it taller and move the legend to the bottom
+    # Increased height and margins for the large pane
     fig_radar.update_layout(
-        height=500, 
         polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
         showlegend=True, 
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+        height=550, 
         margin=dict(t=40, b=40, l=40, r=40)
     )
     st.plotly_chart(fig_radar, use_container_width=True, key="radar")
 
     st.divider()
 
-    # 4. TABLE AND MAP (Side-by-Side underneath)
-    c1, c2 = st.columns(2)
+    # --- Two Panes Below ---
+    c_left, c_right = st.columns(2)
     
-    with c1:
+    with c_left:
         st.write("### Parameter Breakdown")
         breakdown_data = []
         for p in active_params:
             breakdown_data.append({
                 "Parameter": p,
-                "Fidelity": site_dict.get(f"{p} Fit", "N/A"),
-                "Data Quality (Rel)": site_dict.get(f"{p} Rel", "N/A")
+                "Fidelity": site_data[f"{p} Fit"],
+                "Data Quality (Rel)": site_data[f"{p} Rel"]
             })
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
-    with c2:
+    with c_right:
         st.write("### Global Location")
-        if pd.notna(site_dict.get('lat')) and pd.notna(site_dict.get('lon')):
-            map_df = pd.DataFrame({"lat": [site_dict['lat']], "lon": [site_dict['lon']], "Site": [selected_site]})
-            fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
-            fig_map.update_traces(marker=dict(size=12, color="red"))
-            fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
-            fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=300)
-            st.plotly_chart(fig_map, use_container_width=True, key="map")
-        else:
-            st.warning("No coordinate data (lat/lon) available for this site.")
+        try:
+            lat_val = float(site_data['lat'])
+            lon_val = float(site_data['lon'])
+            
+            if pd.notna(lat_val) and pd.notna(lon_val):
+                map_df = pd.DataFrame({"lat": [lat_val], "lon": [lon_val], "Site": [selected_site]})
+                fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
+                fig_map.update_traces(marker=dict(size=12, color="red"))
+                fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
+                fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10))
+                st.plotly_chart(fig_map, use_container_width=True, key="map")
+            else:
+                st.warning("No coordinate data available for this site.")
+        except (ValueError, TypeError):
+            st.warning("Coordinate data (lat/lon) is missing or improperly formatted.")
