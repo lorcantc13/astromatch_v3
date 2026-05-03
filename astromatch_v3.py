@@ -260,7 +260,7 @@ if 'res_df' in st.session_state:
     
     
 st.subheader("🔍 Detailed Site Profile")
-    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
+selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
     
     site_data = res_df[res_df['Site'] == selected_site].iloc[0]
     
