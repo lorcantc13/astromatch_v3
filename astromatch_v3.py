@@ -262,81 +262,81 @@ if 'res_df' in st.session_state:
 st.subheader("🔍 Detailed Site Profile")
 selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
     
-    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
-    
-    # Bulletproof Dynamic Verdict Extraction
-    strong, mod, weak = [], [], []
+site_data = res_df[res_df['Site'] == selected_site].iloc[0]
+
+# Bulletproof Dynamic Verdict Extraction
+strong, mod, weak = [], [], []
+for p in active_params:
+    try:
+        val = float(site_data[f"{p} Fit"])
+        if val >= 0.7: strong.append(p)
+        elif val >= 0.4: mod.append(p)
+        else: weak.append(p)
+    except (ValueError, TypeError):
+        pass # Ignore strings or N/A
+
+verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
+if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
+if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
+if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
+
+st.info(verdict)
+
+# --- Full-Width Radar Chart ---
+st.write("### Radar Chart Footprint")
+categories = active_params
+
+# Bulletproof Radar Chart Extraction
+r_vals = []
+for p in categories:
+    try:
+        r_vals.append(float(site_data[f"{p} Fit"]))
+    except (ValueError, TypeError):
+        r_vals.append(0.0) # Flatline missing data to prevent crash
+
+fig_radar = go.Figure()
+fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
+fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
+
+# Increased height and margins for the large pane
+fig_radar.update_layout(
+    polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
+    showlegend=True, 
+    height=550, 
+    margin=dict(t=40, b=40, l=40, r=40)
+)
+st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+
+st.divider()
+
+# --- Two Panes Below ---
+c_left, c_right = st.columns(2)
+
+with c_left:
+    st.write("### Parameter Breakdown")
+    breakdown_data = []
     for p in active_params:
-        try:
-            val = float(site_data[f"{p} Fit"])
-            if val >= 0.7: strong.append(p)
-            elif val >= 0.4: mod.append(p)
-            else: weak.append(p)
-        except (ValueError, TypeError):
-            pass # Ignore strings or N/A
-    
-    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
-    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
-    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
-    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
-    
-    st.info(verdict)
-    
-    # --- Full-Width Radar Chart ---
-    st.write("### Radar Chart Footprint")
-    categories = active_params
-    
-    # Bulletproof Radar Chart Extraction
-    r_vals = []
-    for p in categories:
-        try:
-            r_vals.append(float(site_data[f"{p} Fit"]))
-        except (ValueError, TypeError):
-            r_vals.append(0.0) # Flatline missing data to prevent crash
-    
-    fig_radar = go.Figure()
-    fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
-    fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
-    
-    # Increased height and margins for the large pane
-    fig_radar.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
-        showlegend=True, 
-        height=550, 
-        margin=dict(t=40, b=40, l=40, r=40)
-    )
-    st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+        breakdown_data.append({
+            "Parameter": p,
+            "Fidelity": site_data[f"{p} Fit"],
+            "Data Quality (Rel)": site_data[f"{p} Rel"]
+        })
+    st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
-    st.divider()
-
-    # --- Two Panes Below ---
-    c_left, c_right = st.columns(2)
-    
-    with c_left:
-        st.write("### Parameter Breakdown")
-        breakdown_data = []
-        for p in active_params:
-            breakdown_data.append({
-                "Parameter": p,
-                "Fidelity": site_data[f"{p} Fit"],
-                "Data Quality (Rel)": site_data[f"{p} Rel"]
-            })
-        st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
-
-    with c_right:
-        st.write("### Global Location")
-        try:
-            lat_val = float(site_data['lat'])
-            lon_val = float(site_data['lon'])
-            
-            if pd.notna(lat_val) and pd.notna(lon_val):
-                map_df = pd.DataFrame({"lat": [lat_val], "lon": [lon_val], "Site": [selected_site]})
-                fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
-                fig_map.update_traces(marker=dict(size=12, color="red"))
-                fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
-                fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_map, use_container_width=True, key="map")
-            else:
-                st.warning("No coordinate data available for this site.")
-        except (ValueError, TypeError):
-            st.warning("Coordinate data (lat/lon) is missing or improperly formatted.")
+with c_right:
+    st.write("### Global Location")
+    try:
+        lat_val = float(site_data['lat'])
+        lon_val = float(site_data['lon'])
+        
+        if pd.notna(lat_val) and pd.notna(lon_val):
+            map_df = pd.DataFrame({"lat": [lat_val], "lon": [lon_val], "Site": [selected_site]})
+            fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
+            fig_map.update_traces(marker=dict(size=12, color="red"))
+            fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
+            fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_map, use_container_width=True, key="map")
+        else:
+            st.warning("No coordinate data available for this site.")
+    except (ValueError, TypeError):
+        st.warning("Coordinate data (lat/lon) is missing or improperly formatted.")
