@@ -233,21 +233,20 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
  # --- Profile Layout ---
     st.write("### Analogue Footprint vs Target")
     
+    # Convert the Pandas Series to a pure Python dictionary ONCE for the whole section
+    # This protects the Radar Chart, the Table, AND the Map from KeyErrors
+    site_dict = site_data.to_dict()
+    
     # 1. RADAR CHART (Full Width / Prominent)
     categories = active_params
     r_vals = []
     
-    # 1. Convert the Pandas Series to a pure Python dictionary
-    site_dict = site_data.to_dict()
-    
     for p in categories:
         col_name = f"{p} Fit"
-        
-        # 2. Safely get the value (defaults to 0 if the column is completely missing)
         val = site_dict.get(col_name, 0)
         
-        # 3. Verify it is a valid number and not NaN
-        if pd.notna(val) and isinstance(val, (int, float, np.number)):
+        # Safely handle numbers, and ignore our "N/A" or "Off/NA" text flags
+        if pd.notna(val) and not isinstance(val, str):
             r_vals.append(float(val))
         else:
             r_vals.append(0)
@@ -256,7 +255,7 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
     fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
     
-    # Make it taller and move the legend to the bottom so it doesn't squash the chart
+    # Make it taller and move the legend to the bottom
     fig_radar.update_layout(
         height=500, 
         polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
@@ -275,17 +274,19 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
         st.write("### Parameter Breakdown")
         breakdown_data = []
         for p in active_params:
+            # Use the safe .get() method here too!
             breakdown_data.append({
                 "Parameter": p,
-                "Fidelity": site_data[f"{p} Fit"],
-                "Data Quality (Rel)": site_data[f"{p} Rel"]
+                "Fidelity": site_dict.get(f"{p} Fit", "N/A"),
+                "Data Quality (Rel)": site_dict.get(f"{p} Rel", "N/A")
             })
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
     with c2:
         st.write("### Global Location")
-        if pd.notna(site_data['lat']) and pd.notna(site_data['lon']):
-            map_df = pd.DataFrame({"lat": [site_data['lat']], "lon": [site_data['lon']], "Site": [selected_site]})
+        # Safely check for coordinates
+        if pd.notna(site_dict.get('lat')) and pd.notna(site_dict.get('lon')):
+            map_df = pd.DataFrame({"lat": [site_dict['lat']], "lon": [site_dict['lon']], "Site": [selected_site]})
             fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
             fig_map.update_traces(marker=dict(size=12, color="red"))
             fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
