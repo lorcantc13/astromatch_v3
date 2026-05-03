@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- 1. APP CONFIG ---
-st.set_page_config(page_title="AstroMatch V2", layout="wide")
+st.set_page_config(page_title="AstroMatch V3", layout="wide")
 
 # --- 2. DATA LOADING ---
 @st.cache_data
@@ -97,7 +97,7 @@ else:
     st.sidebar.warning("Please enable at least one parameter.")
 
 # --- 5. MAIN INTERFACE ---
-st.title("🌌 AstroMatch MCDA Tool v2")
+st.title("🌌 AstroMatch MCDA Tool v3")
 
 col_a, col_b = st.columns(2)
 with col_a:
