@@ -245,7 +245,7 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     
     # 1. Full-Width Top Pane: Radar Chart
     st.write("### Environmental Footprint")
-   categories = active_params
+    categories = active_params
     r_vals = []
     
     for p in categories:
