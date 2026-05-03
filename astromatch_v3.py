@@ -230,44 +230,31 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     st.session_state['res_df'] = res_df
     st.session_state['target_env'] = target_env
 
-# --- 7. RESULTS DASHBOARD ---
-if 'res_df' in st.session_state:
-    res_df = st.session_state['res_df']
+ # --- Profile Layout ---
+    st.write("### Analogue Footprint vs Target")
     
-    st.subheader("🏆 Selection-Sync Dashboard")
+    # 1. RADAR CHART (Full Width / Prominent)
+    categories = active_params
+    r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
     
-    display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
-    st.dataframe(
-        res_df.head(5)[display_cols].style.background_gradient(subset=['Suitability'], cmap="Blues"), 
-        use_container_width=True
+    fig_radar = go.Figure()
+    fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
+    fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
+    
+    # Make it taller and move the legend to the bottom so it doesn't squash the chart
+    fig_radar.update_layout(
+        height=500, 
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
+        showlegend=True, 
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+        margin=dict(t=40, b=40, l=40, r=40)
     )
-    
-    with st.expander("View all sites"):
-        st.dataframe(res_df[display_cols], use_container_width=True)
-        
+    st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+
     st.divider()
-    
-    st.subheader("🔍 Detailed Site Profile")
-    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
-    
-    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
-    
-    strong, mod, weak = [], [], []
-    for p in active_params:
-        val = site_data[f"{p} Fit"]
-        if val != "N/A" and val != "Off/NA":
-            if val >= 0.7: strong.append(p)
-            elif val >= 0.4: mod.append(p)
-            else: weak.append(p)
-    
-    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
-    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
-    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
-    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
-    
-    st.info(verdict)
-    
-    c1, c2, c3 = st.columns([1, 1, 1])
+
+    # 2. TABLE AND MAP (Side-by-Side underneath)
+    c1, c2 = st.columns(2)
     
     with c1:
         st.write("### Parameter Breakdown")
@@ -281,24 +268,13 @@ if 'res_df' in st.session_state:
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
     with c2:
-        st.write("### Environmental Footprint")
-        categories = active_params
-        r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
-        
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
-        fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
-        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=True, margin=dict(t=20, b=20, l=20, r=20))
-        st.plotly_chart(fig_radar, use_container_width=True, key="radar")
-
-    with c3:
         st.write("### Global Location")
         if pd.notna(site_data['lat']) and pd.notna(site_data['lon']):
             map_df = pd.DataFrame({"lat": [site_data['lat']], "lon": [site_data['lon']], "Site": [selected_site]})
             fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
             fig_map.update_traces(marker=dict(size=12, color="red"))
             fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
-            fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10))
+            fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=300)
             st.plotly_chart(fig_map, use_container_width=True, key="map")
         else:
             st.warning("No coordinate data (lat/lon) available for this site.")
