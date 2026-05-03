@@ -246,8 +246,17 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     # 1. Full-Width Top Pane: Radar Chart
     st.write("### Environmental Footprint")
     categories = active_params
-    r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
+    r_vals = []
     
+    for p in categories:
+        # 1. Use .get() so it doesn't crash if the column is entirely missing
+        val = site_data.get(f"{p} Fit", 0)
+        
+        # 2. Check if it's a valid number (handles standard floats, integers, and numpy numbers)
+        if isinstance(val, (float, int, np.number)) and pd.notna(val):
+            r_vals.append(float(val))
+        else:
+            r_vals.append(0)    
     fig_radar = go.Figure()
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
     fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
