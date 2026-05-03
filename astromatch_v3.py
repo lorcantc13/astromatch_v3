@@ -317,7 +317,7 @@ if 'res_df' in st.session_state:
             breakdown_data.append({
                 "Parameter": p,
                 "Fidelity": site_data[f"{p} Fit"],
-                "Data Quality (Rel)": site_data[f"{p} Rel"]
+                "Data Quality": site_data[f"{p} Rel"]
             })
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
