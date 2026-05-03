@@ -235,8 +235,24 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     
     # 1. RADAR CHART (Full Width / Prominent)
     categories = active_params
-    r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
+categories = active_params
+    r_vals = []
     
+    # 1. Convert the Pandas Series to a pure Python dictionary
+    site_dict = site_data.to_dict()
+    
+    for p in categories:
+        col_name = f"{p} Fit"
+        
+        # 2. Safely get the value (defaults to 0 if the column is completely missing)
+        val = site_dict.get(col_name, 0)
+        
+        # 3. Verify it is a valid number and not NaN
+        if pd.notna(val) and isinstance(val, (int, float, np.number)):
+            r_vals.append(float(val))
+        else:
+            r_vals.append(0)
+            
     fig_radar = go.Figure()
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
     fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
