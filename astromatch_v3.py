@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- 1. APP CONFIG ---
-st.set_page_config(page_title="AstroMatch V3", layout="wide")
+st.set_page_config(page_title="AstroMatch V2", layout="wide")
 
 # --- 2. DATA LOADING ---
 @st.cache_data
@@ -44,38 +44,27 @@ def calculate_suitability(site_min, site_max, target_min, target_max):
 # --- 4. SIDEBAR: WEIGHTING & VISUALS ---
 st.sidebar.header("🎯 Importance Weights")
 st.sidebar.info("Toggle parameters and adjust influence (1-10)")
-st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v2/tree/main/documentation)**")
-st.sidebar.write("") # Adds space before the toggles start
 
 params_config = {
     "Temperature": {"color": "#EF553B", "default": 5, "col_prefix": "T"},
-    "Salinity": {"color": "#F5F5F5", "default": 5, "col_prefix": "Sal"},
-    "pH": {"color": "#00CC96", "default": 5, "col_prefix": "pH"},
+    "Salinity": {"color": "#00CC96", "default": 5, "col_prefix": "Sal"},
+    "pH": {"color": "#636EFA", "default": 5, "col_prefix": "pH"},
     "Pressure": {"color": "#AB63FA", "default": 5, "col_prefix": "Pres"},
-    "Isolation": {"color": "#6ab7f1", "default": 5, "col_prefix": "Iso"},
-    "Redox Potential": {"color": "#FF8C00", "default": 5, "col_prefix": "Redox"}
+    "Isolation": {"color": "#FFA15A", "default": 5, "col_prefix": "Iso", "help": "Derived from Physical Confinement, Hydrologic Connectivity, and Isolation Time rubrics."},
+    "Redox": {"color": "#19D3F3", "default": 5, "col_prefix": "Redox", "help": "Derived from Evidence of Reductants, Oxidants, and Metabolic Equilibrium rubrics."}
 }
 
 user_weights = {}
 active_params = []
 
 for name, info in params_config.items():
-    # Create two columns: one for the title (wider), one for the toggle (narrower)
-    col_title, col_toggle = st.sidebar.columns([4, 1])
+    st.sidebar.markdown(f"**<span style='color:{info['color']}'>{name}</span>**", unsafe_allow_html=True)
     
-    with col_title:
-        st.markdown(f"**<span style='color:{info['color']}'>{name}</span>**", unsafe_allow_html=True)
-        if "help" in info:
-            st.caption(f"ℹ️ {info['help']}")
-            
-    with col_toggle:
-        # Use an empty string for the label and collapse visibility to remove the text entirely
-        is_on = st.toggle(" ", value=True, key=f"tog_{name}", label_visibility="collapsed")
-    
-    # Put the slider directly underneath
+    if "help" in info:
+        st.sidebar.caption(f"ℹ️ {info['help']}")
+        
+    is_on = st.sidebar.toggle(f"Include {name}", value=True, key=f"tog_{name}")
     val = st.sidebar.slider(f"{name} Weight", 1, 10, info['default'], label_visibility="collapsed", key=f"sld_{name}", disabled=not is_on)
-    
-    st.sidebar.write("") # Adds breathing room between parameters
     
     if is_on:
         user_weights[name] = val
@@ -97,7 +86,7 @@ else:
     st.sidebar.warning("Please enable at least one parameter.")
 
 # --- 5. MAIN INTERFACE ---
-st.title("🌌 AstroMatch MCDA Tool v3")
+st.title("🌌 AstroMatch MCDA Tool v2")
 
 col_a, col_b = st.columns(2)
 with col_a:
@@ -242,42 +231,45 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     st.session_state['target_env'] = target_env
 
 # --- 7. RESULTS DASHBOARD ---
+if 'res_df' in st.session_state:
+    res_df = st.session_state['res_df']
     
-    # 1. Full-Width Top Pane: Radar Chart
-    st.write("### Environmental Footprint")
-    categories = active_params
-    r_vals = []
+    st.subheader("🏆 Selection-Sync Dashboard")
     
-    for p in categories:
-        col_name = f"{p} Fit"
+    display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
+    st.dataframe(
+        res_df.head(5)[display_cols].style.background_gradient(subset=['Suitability'], cmap="Blues"), 
+        use_container_width=True
+    )
+    
+    with st.expander("View all sites"):
+        st.dataframe(res_df[display_cols], use_container_width=True)
         
-        # 1. Safely check if the column actually exists in our data
-        if col_name in site_data:
-            val = site_data[col_name]
-            
-            # 2. Verify it is a valid number (and not missing/NaN)
-            if pd.notna(val) and isinstance(val, (int, float, np.number)):
-                r_vals.append(float(val))
-            else:
-                r_vals.append(0)
-        else:
-            # Fallback if the column is missing entirely
-            r_vals.append(0)
-            
-    fig_radar = go.Figure()
-    fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
-    fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
-    
-    # Adjust margins to take advantage of the wider space
-    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=True, margin=dict(t=30, b=30, l=30, r=30))
-    st.plotly_chart(fig_radar, use_container_width=True, key="radar")
-
     st.divider()
-
-    # 2. Bottom Panes: Parameter Breakdown & Map
-    c_bottom_1, c_bottom_2 = st.columns(2)
     
-    with c_bottom_1:
+    st.subheader("🔍 Detailed Site Profile")
+    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
+    
+    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
+    
+    strong, mod, weak = [], [], []
+    for p in active_params:
+        val = site_data[f"{p} Fit"]
+        if val != "N/A" and val != "Off/NA":
+            if val >= 0.7: strong.append(p)
+            elif val >= 0.4: mod.append(p)
+            else: weak.append(p)
+    
+    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
+    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
+    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
+    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
+    
+    st.info(verdict)
+    
+    c1, c2, c3 = st.columns([1, 1, 1])
+    
+    with c1:
         st.write("### Parameter Breakdown")
         breakdown_data = []
         for p in active_params:
@@ -288,7 +280,18 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
             })
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
-    with c_bottom_2:
+    with c2:
+        st.write("### Environmental Footprint")
+        categories = active_params
+        r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
+        
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
+        fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
+        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=True, margin=dict(t=20, b=20, l=20, r=20))
+        st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+
+    with c3:
         st.write("### Global Location")
         if pd.notna(site_data['lat']) and pd.notna(site_data['lon']):
             map_df = pd.DataFrame({"lat": [site_data['lat']], "lon": [site_data['lon']], "Site": [selected_site]})
