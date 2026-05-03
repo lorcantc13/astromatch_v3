@@ -242,45 +242,26 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     st.session_state['target_env'] = target_env
 
 # --- 7. RESULTS DASHBOARD ---
-if 'res_df' in st.session_state:
-    res_df = st.session_state['res_df']
     
-    st.subheader("🏆 Selection-Sync Dashboard")
+    # 1. Full-Width Top Pane: Radar Chart
+    st.write("### Environmental Footprint")
+    categories = active_params
+    r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
     
-    display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
-    st.dataframe(
-        res_df.head(5)[display_cols].style.background_gradient(subset=['Suitability'], cmap="Blues"), 
-        use_container_width=True
-    )
+    fig_radar = go.Figure()
+    fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
+    fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
     
-    with st.expander("View all sites"):
-        st.dataframe(res_df[display_cols], use_container_width=True)
-        
+    # Adjust margins to take advantage of the wider space
+    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=True, margin=dict(t=30, b=30, l=30, r=30))
+    st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+
     st.divider()
+
+    # 2. Bottom Panes: Parameter Breakdown & Map
+    c_bottom_1, c_bottom_2 = st.columns(2)
     
-    st.subheader("🔍 Detailed Site Profile")
-    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
-    
-    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
-    
-    strong, mod, weak = [], [], []
-    for p in active_params:
-        val = site_data[f"{p} Fit"]
-        if val != "N/A" and val != "Off/NA":
-            if val >= 0.7: strong.append(p)
-            elif val >= 0.4: mod.append(p)
-            else: weak.append(p)
-    
-    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
-    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
-    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
-    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
-    
-    st.info(verdict)
-    
-    c1, c2, c3 = st.columns([1, 1, 1])
-    
-    with c1:
+    with c_bottom_1:
         st.write("### Parameter Breakdown")
         breakdown_data = []
         for p in active_params:
@@ -291,18 +272,7 @@ if 'res_df' in st.session_state:
             })
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
-    with c2:
-        st.write("### Environmental Footprint")
-        categories = active_params
-        r_vals = [site_data[f"{p} Fit"] if isinstance(site_data[f"{p} Fit"], float) else 0 for p in categories]
-        
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
-        fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
-        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=True, margin=dict(t=20, b=20, l=20, r=20))
-        st.plotly_chart(fig_radar, use_container_width=True, key="radar")
-
-    with c3:
+    with c_bottom_2:
         st.write("### Global Location")
         if pd.notna(site_data['lat']) and pd.notna(site_data['lon']):
             map_df = pd.DataFrame({"lat": [site_data['lat']], "lon": [site_data['lon']], "Site": [selected_site]})
