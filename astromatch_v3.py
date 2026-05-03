@@ -282,7 +282,7 @@ if 'res_df' in st.session_state:
     st.info(verdict)
     
     # --- Full-Width Radar Chart ---
-    st.write("### Radar Chart Footprint")
+    st.write("### Radar Footprint")
     categories = active_params
     
     # Bulletproof Radar Chart Extraction
@@ -322,7 +322,7 @@ if 'res_df' in st.session_state:
         st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
 
     with c_right:
-        st.write("### Global Location")
+        st.write("### Site Location")
         try:
             lat_val = float(site_data['lat'])
             lon_val = float(site_data['lon'])
