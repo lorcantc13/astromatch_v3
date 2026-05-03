@@ -235,7 +235,6 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     
     # 1. RADAR CHART (Full Width / Prominent)
     categories = active_params
-categories = active_params
     r_vals = []
     
     # 1. Convert the Pandas Series to a pure Python dictionary
