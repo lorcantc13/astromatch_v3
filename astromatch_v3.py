@@ -298,6 +298,20 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     res_df['Pareto'] = compute_pareto_frontier(res_df, fit_columns, epsilon=EPSILON)
 
     st.session_state['res_df'] = res_df
+    # Diagnostic — paste in after the Pareto computation
+print(f"Sites on frontier: {res_df['Pareto'].sum()} / {len(res_df)}")
+print(f"\nScore distribution across active parameters:")
+for col in fit_columns:
+    valid = res_df[col].apply(lambda x: isinstance(x, (int, float)) and not pd.isna(x))
+    numeric = res_df.loc[valid, col].astype(float)
+    print(f"  {col}: min={numeric.min():.3f}, max={numeric.max():.3f}, "
+          f"range={numeric.max()-numeric.min():.3f}, n={len(numeric)}")
+print(f"\nMissing data per site:")
+for _, row in res_df.iterrows():
+    missing = sum(1 for col in fit_columns 
+                  if not isinstance(row[col], (int, float)) or pd.isna(row[col]))
+    if missing > 0:
+        print(f"  {row['Site']}: {missing}/{len(fit_columns)} parameters missing")
     st.session_state['target_env'] = target_env
     st.session_state['active_params'] = active_params
 
