@@ -20,32 +20,70 @@ def load_data():
 
 analogues_df, targets_df = load_data()
 
-# --- 3. SCORING ENGINE (GAUSSIAN-JACCARD) ---
-def calculate_suitability(site_min, site_max, target_min, target_max):
-    if pd.isna(site_min) or pd.isna(target_min) or pd.isna(site_max) or pd.isna(target_max):
-        return None # Indicates missing data
+# --- 3. SCORING ENGINE (FUZZY TRAPEZOIDAL) ---
+SHOULDER_FRAC = 0.25  # Single hyperparameter for the shoulder width
+ORDINAL_MAX_SCALE = 5  # 5-point scale for isolation and redox
+
+def fuzzy_membership(x, t_min, t_max, shoulder):
+    """Trapezoidal membership function: 1 inside [t_min, t_max], linear decay over shoulder."""
+    if t_min <= x <= t_max:
+        return 1.0
+    if x < t_min:
+        return max(0.0, 1.0 - (t_min - x) / shoulder) if shoulder > 0 else 0.0
+    return max(0.0, 1.0 - (x - t_max) / shoulder) if shoulder > 0 else 0.0
+
+def fuzzy_suitability(s_min, s_max, t_min, t_max, shoulder_frac=SHOULDER_FRAC, n=200):
+    """
+    Fuzzy trapezoidal suitability for continuous parameters.
+    Returns the average of specificity (analogue->target) and coverage (target->analogue).
+    """
+    if pd.isna(s_min) or pd.isna(s_max) or pd.isna(t_min) or pd.isna(t_max):
+        return None
     
-    s_mid = (site_min + site_max) / 2
-    t_mid = (target_min + target_max) / 2
-    t_width = max(target_max - target_min, 1.0)
+    t_width = max(t_max - t_min, 1e-9)
+    s_width = max(s_max - s_min, 1e-9)
+    t_shoulder = shoulder_frac * t_width
+    s_shoulder = shoulder_frac * s_width
     
-    sigma = t_width 
-    gaussian = np.exp(-((s_mid - t_mid)**2) / (2 * sigma**2))
+    # Specificity: how much of the analogue lies in the fuzzy target
+    xs = np.linspace(s_min, s_max, n)
+    specificity = np.mean([fuzzy_membership(x, t_min, t_max, t_shoulder) for x in xs])
     
-    overlap_min = max(site_min, target_min)
-    overlap_max = min(site_max, target_max)
+    # Coverage: how much of the target is reachable by the fuzzy analogue
+    ys = np.linspace(t_min, t_max, n)
+    coverage = np.mean([fuzzy_membership(y, s_min, s_max, s_shoulder) for y in ys])
     
-    if overlap_max > overlap_min:
-        intersection = overlap_max - overlap_min
-        union = max(site_max, target_max) - min(site_min, target_min)
-        return max(gaussian, intersection / union)
-    return gaussian
+    return 0.5 * (specificity + coverage)
+
+def ordinal_suitability(s_score, t_score, max_scale=ORDINAL_MAX_SCALE):
+    """Linear ordinal distance for isolation and redox scores."""
+    if pd.isna(s_score) or pd.isna(t_score):
+        return None
+    return 1.0 - abs(float(s_score) - float(t_score)) / (max_scale - 1)
+
+def calculate_suitability_for_param(site, target_data, param_name, prefix):
+    """
+    Routes by parameter type: ordinal parameters use ordinal_suitability,
+    continuous parameters use fuzzy_suitability.
+    """
+    is_ordinal = prefix in ['Iso', 'Redox']
+    
+    if is_ordinal:
+        # Ordinal: single score column
+        score_col = f"{prefix}_score"
+        return ordinal_suitability(site.get(score_col), target_data.get(score_col))
+    else:
+        # Continuous: min/max columns
+        return fuzzy_suitability(
+            site.get(f"{prefix}_min"), site.get(f"{prefix}_max"),
+            target_data.get(f"{prefix}_min"), target_data.get(f"{prefix}_max")
+        )
 
 # --- 4. SIDEBAR: WEIGHTING & VISUALS ---
 st.sidebar.header("🎯 Importance Weights")
 st.sidebar.info("Toggle parameters and adjust influence (1-10)")
 st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v2/tree/main/documentation)**")
-st.sidebar.write("") # Adds a little space before the toggles start
+st.sidebar.write("")
 
 params_config = {
     "Temperature": {"color": "#EF553B", "default": 5, "col_prefix": "T"},
@@ -60,7 +98,6 @@ user_weights = {}
 active_params = []
 
 for name, info in params_config.items():
-    # Create two columns: one for the title (wider), one for the toggle (narrower)
     col_title, col_toggle = st.sidebar.columns([4, 1])
     
     with col_title:
@@ -69,13 +106,11 @@ for name, info in params_config.items():
             st.caption(f"ℹ️ {info['help']}")
             
     with col_toggle:
-        # Use an empty string for the label and collapse visibility to remove the text entirely
         is_on = st.toggle(" ", value=True, key=f"tog_{name}", label_visibility="collapsed")
     
-    # Put the slider directly underneath
     val = st.sidebar.slider(f"{name} Weight", 1, 10, info['default'], label_visibility="collapsed", key=f"sld_{name}", disabled=not is_on)
     
-    st.sidebar.write("") # Adds a tiny bit of breathing room between parameters
+    st.sidebar.write("")
     
     if is_on:
         user_weights[name] = val
@@ -143,7 +178,7 @@ with st.expander("🛠 Advanced Options"):
     if uploaded_file:
         try:
             custom_sites_df = pd.read_csv(uploaded_file)
-            custom_sites_df.columns = custom_sites_df.columns.str.strip() # Strip accidental spaces
+            custom_sites_df.columns = custom_sites_df.columns.str.strip()
             custom_sites_df['User_Supplied'] = True 
             st.success(f"✅ Successfully loaded {len(custom_sites_df)} custom site(s)! Click 'Run Analysis' below to update the dashboard.")
         except Exception as e:
@@ -173,22 +208,17 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
         
         for param in active_params:
             prefix = params_config[param]['col_prefix']
-            
-            min_col = f"{prefix}_min" if f"{prefix}_min" in site else f"{prefix}_score"
-            max_col = f"{prefix}_max" if f"{prefix}_max" in site else f"{prefix}_score"
             rel_col = f"{prefix}_rel"
             
-            t_min_col = f"{prefix}_min" if f"{prefix}_min" in target_data else f"{prefix}_score"
-            t_max_col = f"{prefix}_max" if f"{prefix}_max" in target_data else f"{prefix}_score"
-
-            fit = calculate_suitability(site.get(min_col), site.get(max_col), target_data.get(t_min_col), target_data.get(t_max_col))
+            # Route by parameter type — fuzzy for continuous, ordinal for Iso/Redox
+            fit = calculate_suitability_for_param(site, target_data, param, prefix)
             
             if fit is not None:
                 site_fits[param] = fit
                 try:
                     site_rels[param] = float(site.get(rel_col, 1))
                 except (ValueError, TypeError):
-                    site_rels[param] = 1.0 # Default to lowest reliability if bad data
+                    site_rels[param] = 1.0
                 active_site_weights[param] = user_weights[param]
             else:
                 weight_pct = user_weights[param] / w_sum_total
@@ -263,7 +293,6 @@ if 'res_df' in st.session_state:
     
     site_data = res_df[res_df['Site'] == selected_site].iloc[0]
     
-    # Bulletproof Dynamic Verdict Extraction
     strong, mod, weak = [], [], []
     for p in active_params:
         try:
@@ -272,7 +301,7 @@ if 'res_df' in st.session_state:
             elif val >= 0.4: mod.append(p)
             else: weak.append(p)
         except (ValueError, TypeError):
-            pass # Ignore strings or N/A
+            pass
     
     verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
     if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
@@ -281,17 +310,15 @@ if 'res_df' in st.session_state:
     
     st.info(verdict)
     
-    # --- Full-Width Radar Chart ---
     st.write("### Radar Footprint")
     categories = active_params
     
-    # Bulletproof Radar Chart Extraction
     r_vals = []
     for p in categories:
         try:
             r_vals.append(float(site_data[f"{p} Fit"]))
         except (ValueError, TypeError):
-            r_vals.append(0.0) # Flatline missing data to prevent crash
+            r_vals.append(0.0)
     
     fig_radar = go.Figure()
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
@@ -307,7 +334,6 @@ if 'res_df' in st.session_state:
 
     st.divider()
 
-    # --- Two Panes Below ---
     c_left, c_right = st.columns(2)
     
     with c_left:
