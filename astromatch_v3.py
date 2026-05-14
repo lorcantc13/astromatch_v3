@@ -44,7 +44,7 @@ def calculate_suitability(site_min, site_max, target_min, target_max):
 # --- 4. SIDEBAR: WEIGHTING & VISUALS ---
 st.sidebar.header("🎯 Importance Weights")
 st.sidebar.info("Toggle parameters and adjust influence (1-10)")
-st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v2/tree/main/documentation)**")
+st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v3/tree/main/documentation)**")
 st.sidebar.write("") # Adds a little space before the toggles start
 
 params_config = {
