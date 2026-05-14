@@ -20,96 +20,32 @@ def load_data():
 
 analogues_df, targets_df = load_data()
 
-# --- 3. SCORING ENGINE (FUZZY TRAPEZOIDAL + ORDINAL + PARETO) ---
-SHOULDER_FRAC = 0.25   # Width of fuzzy shoulder as fraction of target range
-ORDINAL_MAX_SCALE = 5  # 5-point scale for isolation and redox
-EPSILON = 0.05         # Pareto-dominance tolerance
-
-def fuzzy_membership(x, t_min, t_max, shoulder):
-    """Trapezoidal membership: 1 inside [t_min, t_max], linear decay over shoulder."""
-    if t_min <= x <= t_max:
-        return 1.0
-    if x < t_min:
-        return max(0.0, 1.0 - (t_min - x) / shoulder) if shoulder > 0 else 0.0
-    return max(0.0, 1.0 - (x - t_max) / shoulder) if shoulder > 0 else 0.0
-
-def fuzzy_suitability(s_min, s_max, t_min, t_max, shoulder_frac=SHOULDER_FRAC, n=200):
-    """
-    Fuzzy trapezoidal suitability for continuous parameters.
-    Returns the average of specificity (analogue->target) and coverage (target->analogue).
-    """
-    if pd.isna(s_min) or pd.isna(s_max) or pd.isna(t_min) or pd.isna(t_max):
-        return None
+# --- 3. SCORING ENGINE (GAUSSIAN-JACCARD) ---
+def calculate_suitability(site_min, site_max, target_min, target_max):
+    if pd.isna(site_min) or pd.isna(target_min) or pd.isna(site_max) or pd.isna(target_max):
+        return None # Indicates missing data
     
-    t_width = max(t_max - t_min, 1e-9)
-    s_width = max(s_max - s_min, 1e-9)
-    t_shoulder = shoulder_frac * t_width
-    s_shoulder = shoulder_frac * s_width
+    s_mid = (site_min + site_max) / 2
+    t_mid = (target_min + target_max) / 2
+    t_width = max(target_max - target_min, 1.0)
     
-    # Specificity: how much of the analogue lies in the fuzzy target
-    xs = np.linspace(s_min, s_max, n)
-    specificity = np.mean([fuzzy_membership(x, t_min, t_max, t_shoulder) for x in xs])
+    sigma = t_width 
+    gaussian = np.exp(-((s_mid - t_mid)**2) / (2 * sigma**2))
     
-    # Coverage: how much of the target is reachable by the fuzzy analogue
-    ys = np.linspace(t_min, t_max, n)
-    coverage = np.mean([fuzzy_membership(y, s_min, s_max, s_shoulder) for y in ys])
+    overlap_min = max(site_min, target_min)
+    overlap_max = min(site_max, target_max)
     
-    return 0.5 * (specificity + coverage)
-
-def ordinal_suitability(s_score, t_score, max_scale=ORDINAL_MAX_SCALE):
-    """Linear ordinal distance for isolation and redox scores."""
-    if pd.isna(s_score) or pd.isna(t_score):
-        return None
-    return 1.0 - abs(float(s_score) - float(t_score)) / (max_scale - 1)
-
-def calculate_suitability_for_param(site, target_data, param_name, prefix):
-    """Routes by parameter type: ordinal for Iso/Redox, fuzzy for everything else."""
-    is_ordinal = prefix in ['Iso', 'Redox']
-    
-    if is_ordinal:
-        score_col = f"{prefix}_score"
-        return ordinal_suitability(site.get(score_col), target_data.get(score_col))
-    else:
-        return fuzzy_suitability(
-            site.get(f"{prefix}_min"), site.get(f"{prefix}_max"),
-            target_data.get(f"{prefix}_min"), target_data.get(f"{prefix}_max")
-        )
-
-def compute_pareto_frontier(res_df, fit_columns, epsilon=EPSILON):
-    """
-    Identify sites on the Pareto frontier across the active parameter fit columns.
-    A site is dominated if some other site beats it by at least epsilon on every parameter
-    and strictly exceeds it on at least one.
-    """
-    score_matrix = []
-    for _, row in res_df.iterrows():
-        row_scores = []
-        for col in fit_columns:
-            try:
-                row_scores.append(float(row[col]))
-            except (ValueError, TypeError):
-                row_scores.append(-np.inf)  # Missing data = worst possible
-        score_matrix.append(row_scores)
-    
-    scores = np.array(score_matrix)
-    n = len(scores)
-    on_frontier = np.ones(n, dtype=bool)
-    
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if np.all(scores[j] >= scores[i] + epsilon) and np.any(scores[j] > scores[i]):
-                on_frontier[i] = False
-                break
-    
-    return pd.Series(on_frontier, index=res_df.index)
+    if overlap_max > overlap_min:
+        intersection = overlap_max - overlap_min
+        union = max(site_max, target_max) - min(site_min, target_min)
+        return max(gaussian, intersection / union)
+    return gaussian
 
 # --- 4. SIDEBAR: WEIGHTING & VISUALS ---
 st.sidebar.header("🎯 Importance Weights")
 st.sidebar.info("Toggle parameters and adjust influence (1-10)")
 st.sidebar.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v2/tree/main/documentation)**")
-st.sidebar.write("")
+st.sidebar.write("") # Adds a little space before the toggles start
 
 params_config = {
     "Temperature": {"color": "#EF553B", "default": 5, "col_prefix": "T"},
@@ -124,6 +60,7 @@ user_weights = {}
 active_params = []
 
 for name, info in params_config.items():
+    # Create two columns: one for the title (wider), one for the toggle (narrower)
     col_title, col_toggle = st.sidebar.columns([4, 1])
     
     with col_title:
@@ -132,11 +69,13 @@ for name, info in params_config.items():
             st.caption(f"ℹ️ {info['help']}")
             
     with col_toggle:
+        # Use an empty string for the label and collapse visibility to remove the text entirely
         is_on = st.toggle(" ", value=True, key=f"tog_{name}", label_visibility="collapsed")
     
+    # Put the slider directly underneath
     val = st.sidebar.slider(f"{name} Weight", 1, 10, info['default'], label_visibility="collapsed", key=f"sld_{name}", disabled=not is_on)
     
-    st.sidebar.write("")
+    st.sidebar.write("") # Adds a tiny bit of breathing room between parameters
     
     if is_on:
         user_weights[name] = val
@@ -204,7 +143,7 @@ with st.expander("🛠 Advanced Options"):
     if uploaded_file:
         try:
             custom_sites_df = pd.read_csv(uploaded_file)
-            custom_sites_df.columns = custom_sites_df.columns.str.strip()
+            custom_sites_df.columns = custom_sites_df.columns.str.strip() # Strip accidental spaces
             custom_sites_df['User_Supplied'] = True 
             st.success(f"✅ Successfully loaded {len(custom_sites_df)} custom site(s)! Click 'Run Analysis' below to update the dashboard.")
         except Exception as e:
@@ -234,16 +173,22 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
         
         for param in active_params:
             prefix = params_config[param]['col_prefix']
+            
+            min_col = f"{prefix}_min" if f"{prefix}_min" in site else f"{prefix}_score"
+            max_col = f"{prefix}_max" if f"{prefix}_max" in site else f"{prefix}_score"
             rel_col = f"{prefix}_rel"
             
-            fit = calculate_suitability_for_param(site, target_data, param, prefix)
+            t_min_col = f"{prefix}_min" if f"{prefix}_min" in target_data else f"{prefix}_score"
+            t_max_col = f"{prefix}_max" if f"{prefix}_max" in target_data else f"{prefix}_score"
+
+            fit = calculate_suitability(site.get(min_col), site.get(max_col), target_data.get(t_min_col), target_data.get(t_max_col))
             
             if fit is not None:
                 site_fits[param] = fit
                 try:
                     site_rels[param] = float(site.get(rel_col, 1))
                 except (ValueError, TypeError):
-                    site_rels[param] = 1.0
+                    site_rels[param] = 1.0 # Default to lowest reliability if bad data
                 active_site_weights[param] = user_weights[param]
             else:
                 weight_pct = user_weights[param] / w_sum_total
@@ -293,27 +238,8 @@ if st.button("🚀 Run Analysis") and target_env and user_weights:
     res_df = pd.DataFrame(results).sort_values("Suitability", ascending=False).reset_index(drop=True)
     res_df.index += 1 
 
-    # Compute Pareto frontier across active parameter fits
-    fit_columns = [f"{p} Fit" for p in active_params]
-    res_df['Pareto'] = compute_pareto_frontier(res_df, fit_columns, epsilon=EPSILON)
-
     st.session_state['res_df'] = res_df
-    # Diagnostic — paste in after the Pareto computation
-print(f"Sites on frontier: {res_df['Pareto'].sum()} / {len(res_df)}")
-print(f"\nScore distribution across active parameters:")
-for col in fit_columns:
-    valid = res_df[col].apply(lambda x: isinstance(x, (int, float)) and not pd.isna(x))
-    numeric = res_df.loc[valid, col].astype(float)
-    print(f"  {col}: min={numeric.min():.3f}, max={numeric.max():.3f}, "
-          f"range={numeric.max()-numeric.min():.3f}, n={len(numeric)}")
-print(f"\nMissing data per site:")
-for _, row in res_df.iterrows():
-    missing = sum(1 for col in fit_columns 
-                  if not isinstance(row[col], (int, float)) or pd.isna(row[col]))
-    if missing > 0:
-        print(f"  {row['Site']}: {missing}/{len(fit_columns)} parameters missing")
     st.session_state['target_env'] = target_env
-    st.session_state['active_params'] = active_params
 
 # --- 7. RESULTS DASHBOARD ---
 if 'res_df' in st.session_state:
@@ -329,52 +255,6 @@ if 'res_df' in st.session_state:
     
     with st.expander("View all sites"):
         st.dataframe(res_df[display_cols], use_container_width=True)
-
-    st.divider()
-    
-    # --- Pareto Frontier Section ---
-    st.subheader("🌐 Pareto-Optimal Analogues")
-    n_frontier = int(res_df['Pareto'].sum())
-    n_total = len(res_df)
-    st.caption(
-        f"{n_frontier} of {n_total} sites are non-dominated across the active parameters. "
-        f"These sites are worth considering under any reasonable weighting — every other site "
-        f"is beaten by at least one of these on every dimension. "
-        f"ε = {EPSILON} (sites within this margin on all parameters are treated as tied)."
-    )
-    
-    frontier_df = res_df[res_df['Pareto']].sort_values("Suitability", ascending=False)
-    
-    pareto_display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
-    if len(frontier_df) > 0:
-        st.dataframe(
-            frontier_df[pareto_display_cols].style.background_gradient(subset=['Suitability'], cmap="Greens"),
-            use_container_width=True
-        )
-    else:
-        st.info("No sites passed the Pareto frontier filter — try lowering ε or check for missing data.")
-    
-    # Use session_state to avoid mismatches if user changes toggles after running
-    active_params_for_display = st.session_state.get('active_params', active_params)
-    
-    with st.expander("Per-parameter champions (best site for each active parameter)"):
-        champion_rows = []
-        for p in active_params_for_display:
-            col = f"{p} Fit"
-            if col not in res_df.columns:
-                continue
-            valid = res_df[res_df[col].apply(lambda x: isinstance(x, (int, float)) and not pd.isna(x))]
-            if len(valid) > 0:
-                top = valid.loc[valid[col].astype(float).idxmax()]
-                champion_rows.append({
-                    "Parameter": p,
-                    "Best Site": top['Site'],
-                    "Score": round(float(top[col]), 4)
-                })
-        if champion_rows:
-            st.dataframe(pd.DataFrame(champion_rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("No per-parameter champions available — check for missing data.")
         
     st.divider()
     
@@ -383,33 +263,35 @@ if 'res_df' in st.session_state:
     
     site_data = res_df[res_df['Site'] == selected_site].iloc[0]
     
+    # Bulletproof Dynamic Verdict Extraction
     strong, mod, weak = [], [], []
-    for p in active_params_for_display:
+    for p in active_params:
         try:
             val = float(site_data[f"{p} Fit"])
             if val >= 0.7: strong.append(p)
             elif val >= 0.4: mod.append(p)
             else: weak.append(p)
         except (ValueError, TypeError):
-            pass
+            pass # Ignore strings or N/A
     
-    pareto_flag = " 🌐 *On Pareto frontier*" if site_data.get('Pareto', False) else ""
-    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**.{pareto_flag} "
+    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
     if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
     if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
     if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
     
     st.info(verdict)
     
+    # --- Full-Width Radar Chart ---
     st.write("### Radar Footprint")
-    categories = active_params_for_display
+    categories = active_params
     
+    # Bulletproof Radar Chart Extraction
     r_vals = []
     for p in categories:
         try:
             r_vals.append(float(site_data[f"{p} Fit"]))
         except (ValueError, TypeError):
-            r_vals.append(0.0)
+            r_vals.append(0.0) # Flatline missing data to prevent crash
     
     fig_radar = go.Figure()
     fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
@@ -425,12 +307,13 @@ if 'res_df' in st.session_state:
 
     st.divider()
 
+    # --- Two Panes Below ---
     c_left, c_right = st.columns(2)
     
     with c_left:
         st.write("### Parameter Breakdown")
         breakdown_data = []
-        for p in active_params_for_display:
+        for p in active_params:
             breakdown_data.append({
                 "Parameter": p,
                 "Fidelity": site_data[f"{p} Fit"],
