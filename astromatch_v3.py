@@ -98,6 +98,7 @@ else:
 
 # --- 5. MAIN INTERFACE ---
 st.title("🪐 AstroMatch MCDA Tool (Legacy Model - Dissertation)")
+st.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v3/tree/main/documentation)**")
 
 col_a, col_b = st.columns(2)
 with col_a:
