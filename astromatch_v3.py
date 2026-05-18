@@ -96,7 +96,7 @@ else:
     st.sidebar.warning("Please enable at least one parameter.")
 
 # --- 5. MAIN INTERFACE ---
-st.title("🪐 AstroMatch MCDA Tool (Legacy Model - Dissertation)")
+st.title("🪐 AstroMatch MCDA Tool")
 
 col_a, col_b = st.columns(2)
 with col_a:
