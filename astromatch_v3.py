@@ -148,7 +148,7 @@ with st.expander("🛠 Advanced Options"):
         except Exception as e:
             st.error(f"Error reading file: {e}")
 
-st.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v3/tree/main/documentation)**")
+st.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v3/tree/v3-stable/documentation)**")
 st.divider()
 
 # --- 6. EXECUTION & OUTPUT ---
