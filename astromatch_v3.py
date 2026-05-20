@@ -1,340 +1,203 @@
-import streamlit as st
+"""
+Generate a heatmap of suitability scores across all candidate analogue sites
+and all Enceladus target environments.
+
+Reproduces the AstroMatch v3 scoring engine (Jaccard-Gaussian hybrid, weighted
+arithmetic mean across active parameters) using equal weighting across the
+six parameters as the baseline view.
+
+Output: heatmap_sites_x_targets.png (300 dpi, publication-ready)
+"""
+
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import seaborn as sns
 
-# --- 1. APP CONFIG ---
-st.set_page_config(page_title="AstroMatch V3", layout="wide")
+# --- 1. CONFIGURATION ---------------------------------------------------------
 
-# --- 2. DATA LOADING ---
-@st.cache_data
-def load_data():
-    try:
-        analogues = pd.read_csv('analogues_v2.csv')
-        targets = pd.read_csv('targets_v2.csv')
-        return analogues, targets
-    except FileNotFoundError:
-        st.error("Data files not found. Ensure 'analogues_v2.csv' and 'targets_v2.csv' are in the directory.")
-        return pd.DataFrame(), pd.DataFrame()
+ANALOGUES_PATH = "analogues_v2.csv"
+TARGETS_PATH = "targets_v2.csv"
+OUTPUT_PATH = "heatmap_sites_x_targets.png"
 
-analogues_df, targets_df = load_data()
+# Parameter prefixes match the column-naming convention in the CSVs
+PARAMS_CONFIG = {
+    "Temperature":     {"col_prefix": "T",     "default_weight": 5},
+    "Salinity":        {"col_prefix": "Sal",   "default_weight": 5},
+    "pH":              {"col_prefix": "pH",    "default_weight": 5},
+    "Pressure":        {"col_prefix": "Pres",  "default_weight": 5},
+    "Isolation":       {"col_prefix": "Iso",   "default_weight": 5},
+    "Redox Potential": {"col_prefix": "Redox", "default_weight": 5},
+}
 
-# --- 3. SCORING ENGINE (GAUSSIAN-JACCARD) ---
+# Order target environments top-down through Enceladus (plume -> ice -> ocean -> vents)
+# so the reader's eye traces the moon from outside in.
+TARGET_ORDER = [
+    "Plume Ice Grains - Type I",
+    "Plume Ice Grains - Type II (VOC)",
+    "Plume Ice Grains - Type II (HMOC)",
+    "Plume Ice Grains - Type III",
+    "Intrashell Mushy Fracture Brines",
+    "Ocean Connected Tiger Stripe Brines",
+    "Abyssal Ocean",
+    "Diffuse Venting Zone",
+    "Hydrothermal Vents",
+]
+
+# --- 2. SCORING ENGINE (replicated from app.py for consistency) ---------------
+
 def calculate_suitability(site_min, site_max, target_min, target_max):
+    """Per-parameter fit: max(Jaccard overlap, Gaussian decay) in [0, 1].
+    Returns None if any input is missing."""
     if pd.isna(site_min) or pd.isna(target_min) or pd.isna(site_max) or pd.isna(target_max):
-        return None # Indicates missing data
-    
+        return None
+
     s_mid = (site_min + site_max) / 2
     t_mid = (target_min + target_max) / 2
-    t_width = max(target_max - target_min, 1.0)
-    
-    sigma = t_width 
-    gaussian = np.exp(-((s_mid - t_mid)**2) / (2 * sigma**2))
-    
+    sigma = max(target_max - target_min, 1.0)
+    gaussian = np.exp(-((s_mid - t_mid) ** 2) / (2 * sigma ** 2))
+
     overlap_min = max(site_min, target_min)
     overlap_max = min(site_max, target_max)
-    
     if overlap_max > overlap_min:
         intersection = overlap_max - overlap_min
         union = max(site_max, target_max) - min(site_min, target_min)
         return max(gaussian, intersection / union)
     return gaussian
 
-# --- 4. SIDEBAR: WEIGHTING & VISUALS ---
-st.sidebar.header("🎯 Importance Weights")
-st.sidebar.info("Toggle parameters and adjust influence (1-10)")
-st.sidebar.write("") # Adds space before the toggles start
 
-params_config = {
-    "Temperature": {"color": "#EF553B", "default": 5, "col_prefix": "T"},
-    "Salinity": {"color": "#F5F5F5", "default": 5, "col_prefix": "Sal"},
-    "pH": {"color": "#00CC96", "default": 5, "col_prefix": "pH"},
-    "Pressure": {"color": "#AB63FA", "default": 5, "col_prefix": "Pres"},
-    "Isolation": {"color": "#6ab7f1", "default": 5, "col_prefix": "Iso"},
-    "Redox Potential": {"color": "#FF8C00", "default": 5, "col_prefix": "Redox"}
-}
+def score_site_against_target(site, target_data, user_weights):
+    """Returns the weighted-mean suitability score for one site against one
+    target environment."""
+    fits = {}
+    weights = {}
+    for param, info in PARAMS_CONFIG.items():
+        if param not in user_weights:
+            continue
+        prefix = info["col_prefix"]
+        # Continuous params have _min/_max; ordinal params have _score
+        min_col = f"{prefix}_min" if f"{prefix}_min" in site else f"{prefix}_score"
+        max_col = f"{prefix}_max" if f"{prefix}_max" in site else f"{prefix}_score"
+        t_min_col = f"{prefix}_min" if f"{prefix}_min" in target_data else f"{prefix}_score"
+        t_max_col = f"{prefix}_max" if f"{prefix}_max" in target_data else f"{prefix}_score"
 
-user_weights = {}
-active_params = []
+        fit = calculate_suitability(
+            site.get(min_col), site.get(max_col),
+            target_data.get(t_min_col), target_data.get(t_max_col)
+        )
+        if fit is not None:
+            fits[param] = fit
+            weights[param] = user_weights[param]
 
-for name, info in params_config.items():
-    # Create two columns: one for the title (wider), one for the toggle (narrower)
-    col_title, col_toggle = st.sidebar.columns([4, 1])
-    
-    with col_title:
-        st.markdown(f"**<span style='color:{info['color']}'>{name}</span>**", unsafe_allow_html=True)
-        if "help" in info:
-            st.caption(f"ℹ️ {info['help']}")
-            
-    with col_toggle:
-        # Use empty string for the label and collapse visibility to remove the text entirely
-        is_on = st.toggle(" ", value=True, key=f"tog_{name}", label_visibility="collapsed")
-    
-    # Put the slider directly underneath
-    val = st.sidebar.slider(f"{name} Weight", 1, 10, info['default'], label_visibility="collapsed", key=f"sld_{name}", disabled=not is_on)
-    
-    st.sidebar.write("") # Adds room between parameters
-    
-    if is_on:
-        user_weights[name] = val
-        active_params.append(name)
+    if not weights:
+        return np.nan
+    w_sum = sum(weights.values())
+    return sum(fits[p] * weights[p] for p in weights) / w_sum
 
-# Dynamic Donut Chart
-if user_weights:
-    weights_df = pd.DataFrame({
-        "Parameter": list(user_weights.keys()),
-        "Weight": list(user_weights.values())
-    })
-    fig_donut = px.pie(
-        weights_df, values='Weight', names='Parameter', hole=0.5, color='Parameter',
-        color_discrete_map={k: v['color'] for k, v in params_config.items()}
+
+# --- 3. BUILD THE MATRIX ------------------------------------------------------
+
+def build_suitability_matrix(analogues_df, targets_df, user_weights):
+    """Return a DataFrame indexed by site, columns are target environments,
+    cells are suitability scores in [0, 1]."""
+    matrix = {}
+    for target_env in targets_df["Target_env"]:
+        target_data = targets_df[targets_df["Target_env"] == target_env].iloc[0]
+        scores = {}
+        for _, site in analogues_df.iterrows():
+            scores[site["Site"]] = score_site_against_target(site, target_data, user_weights)
+        matrix[target_env] = scores
+    df = pd.DataFrame(matrix)
+    return df
+
+
+# --- 4. RENDER ----------------------------------------------------------------
+
+def render_heatmap(matrix_df, output_path, weights_label="equal weighting"):
+    """Render the heatmap with top-3 cells per column outlined in red."""
+
+    # Order columns by physical progression through Enceladus
+    cols_present = [c for c in TARGET_ORDER if c in matrix_df.columns]
+    matrix_df = matrix_df[cols_present]
+
+    # Order rows by mean suitability descending (versatile sites at top,
+    # specialists at bottom)
+    matrix_df = matrix_df.loc[
+        matrix_df.mean(axis=1).sort_values(ascending=False).index
+    ]
+
+    fig, ax = plt.subplots(figsize=(11, 8))
+
+    sns.heatmap(
+        matrix_df,
+        cmap="viridis",
+        vmin=0, vmax=1,
+        annot=True,
+        fmt=".2f",
+        annot_kws={"size": 8},
+        linewidths=0.5,
+        linecolor="white",
+        cbar_kws={"label": "Suitability score", "shrink": 0.85},
+        ax=ax,
     )
-    fig_donut.update_layout(showlegend=False, height=220, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-    st.sidebar.plotly_chart(fig_donut, use_container_width=True)
-else:
-    st.sidebar.warning("Please enable at least one parameter.")
 
-# --- 5. MAIN INTERFACE ---
-st.title("🪐 AstroMatch MCDA Tool (Legacy Model - Dissertation)")
+    # Outline top-3 cells per column (the visual proof of the portfolio claim)
+    top3_counts = {site: 0 for site in matrix_df.index}
+    for col_idx, col in enumerate(matrix_df.columns):
+        top3_sites = matrix_df[col].nlargest(3).index
+        for site in top3_sites:
+            row_idx = matrix_df.index.get_loc(site)
+            ax.add_patch(plt.Rectangle(
+                (col_idx, row_idx), 1, 1,
+                fill=False, edgecolor="red", lw=1.8
+            ))
+            top3_counts[site] += 1
 
-col_a, col_b = st.columns(2)
-with col_a:
-    body_choice = st.selectbox("1. Select Target Body", ["Enceladus", "Europa", "Mars"])
+    # Diagnostic: print the top-3 count per site (the figure's central claim
+    # is that no site appears in top-3 for more than four targets)
+    print("\nTop-3 appearances per site (out of 9 targets):")
+    for site, count in sorted(top3_counts.items(), key=lambda x: -x[1]):
+        print(f"  {count}  -  {site}")
+    max_top3 = max(top3_counts.values())
+    print(f"\nMaximum top-3 appearances by any site: {max_top3}")
 
-with col_b:
-    if body_choice == "Enceladus" and not targets_df.empty:
-        env_list = targets_df['Target_env'].unique().tolist()
-        target_env = st.selectbox("2. Select Environment", env_list)
-    else:
-        st.selectbox("2. Select Environment", ["🚧 Coming Soon..."], disabled=True)
-        target_env = None
-
-# --- ADVANCED OPTIONS & CUSTOM UPLOAD ---
-custom_sites_df = pd.DataFrame()
-
-with st.expander("🛠 Advanced Options"):
-    st.selectbox("Select Organism (Preset Weights)", ["🚧 Coming Soon..."], disabled=True)
-    st.divider()
-    
-    st.markdown("**Import Custom Analogue Site**")
-    st.info("Upload a CSV with your own analogue data. It will be temporarily added to the analysis for this session.")
-    
-    template_cols = ['Site', 'lat', 'lon']
-    for p_info in params_config.values():
-        prefix = p_info['col_prefix']
-        if prefix in ['Iso', 'Redox']:
-            template_cols.extend([f"{prefix}_score", f"{prefix}_rel"])
-        else:
-            template_cols.extend([f"{prefix}_min", f"{prefix}_max", f"{prefix}_rel"])
-            
-    template_df = pd.DataFrame(columns=template_cols)
-    
-    st.download_button(
-        label="📥 Download CSV Template",
-        data=template_df.to_csv(index=False).encode('utf-8'),
-        file_name='astromatch_custom_template.csv',
-        mime='text/csv',
+    ax.set_xlabel("Enceladus target environment", fontsize=11)
+    ax.set_ylabel("Terrestrial analogue site", fontsize=11)
+    ax.set_title(
+        f"Per-target suitability across candidate analogue sites\n"
+        f"({weights_label} across six parameters; red outlines = top-3 per target)",
+        fontsize=12, pad=14
     )
-    
-    uploaded_file = st.file_uploader("Upload Completed Template", type=["csv"])
-    
-    if uploaded_file:
-        try:
-            custom_sites_df = pd.read_csv(uploaded_file)
-            custom_sites_df.columns = custom_sites_df.columns.str.strip() # Strip accidental spaces
-            custom_sites_df['User_Supplied'] = True 
-            st.success(f"✅ Successfully loaded {len(custom_sites_df)} custom site(s)! Click 'Run Analysis' below to update the dashboard.")
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
 
-st.markdown("📚 **[Read the AstroMatch Documentation](https://github.com/lorcantc13/astromatch_v3/tree/v3-stable/documentation)**")
-st.divider()
+    plt.setp(ax.get_xticklabels(), rotation=35, ha="right", fontsize=9)
+    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
 
-# --- 6. EXECUTION & OUTPUT ---
-if st.button("🚀 Run Analysis") and target_env and user_weights:
-    target_data = targets_df[targets_df['Target_env'] == target_env].iloc[0]
-    results = []
-    
-    working_analogues = analogues_df.copy()
-    if not custom_sites_df.empty:
-        working_analogues = pd.concat([working_analogues, custom_sites_df], ignore_index=True)
-    
-    w_sum_total = sum(user_weights.values())
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"\nFigure saved to: {output_path}")
+    return matrix_df, top3_counts
 
-    for _, site in working_analogues.iterrows():
-        site_fits = {}
-        site_rels = {}
-        active_site_weights = {}
-        flags = []
-        
-        if site.get('User_Supplied') == True:
-            flags.append("⚠️ User-Supplied Data")
-        
-        for param in active_params:
-            prefix = params_config[param]['col_prefix']
-            
-            min_col = f"{prefix}_min" if f"{prefix}_min" in site else f"{prefix}_score"
-            max_col = f"{prefix}_max" if f"{prefix}_max" in site else f"{prefix}_score"
-            rel_col = f"{prefix}_rel"
-            
-            t_min_col = f"{prefix}_min" if f"{prefix}_min" in target_data else f"{prefix}_score"
-            t_max_col = f"{prefix}_max" if f"{prefix}_max" in target_data else f"{prefix}_score"
 
-            fit = calculate_suitability(site.get(min_col), site.get(max_col), target_data.get(t_min_col), target_data.get(t_max_col))
-            
-            if fit is not None:
-                site_fits[param] = fit
-                try:
-                    site_rels[param] = float(site.get(rel_col, 1))
-                except (ValueError, TypeError):
-                    site_rels[param] = 1.0 # Default to lowest reliability if bad data
-                active_site_weights[param] = user_weights[param]
-            else:
-                weight_pct = user_weights[param] / w_sum_total
-                if weight_pct > 0.05:
-                    flags.append(f"⚠️ Missing {param} data")
-                site_fits[param] = "N/A"
-                site_rels[param] = "N/A"
+# --- 5. MAIN ------------------------------------------------------------------
 
-        actual_w_sum = sum(active_site_weights.values())
-        if actual_w_sum > 0:
-            final_score = sum(site_fits[p] * active_site_weights[p] for p in active_site_weights) / actual_w_sum
-        else:
-            final_score = 0.0
-            
-        if active_site_weights:
-            fits_for_conf = [site_fits[p] for p in active_site_weights]
-            rels_for_conf = [site_rels[p] for p in active_site_weights]
-            
-            if sum(fits_for_conf) > 0:
-                conf_score = sum(f * r for f, r in zip(fits_for_conf, rels_for_conf)) / sum(fits_for_conf)
-            else:
-                conf_score = np.mean(rels_for_conf)
-                
-            for p in active_site_weights:
-                if site_fits[p] > 0.7 and site_rels[p] == 1 and (active_site_weights[p]/actual_w_sum) > 0.2:
-                    flags.append(f"⚠️ Low Rel on core driver: {p}")
-        else:
-            conf_score = 0.0
-            
-        alert_str = " | ".join(set(flags)) if flags else "✅ Reliable"
+def main():
+    analogues_df = pd.read_csv(ANALOGUES_PATH)
+    targets_df = pd.read_csv(TARGETS_PATH)
 
-        res_dict = {
-            "Site": str(site.get('Site', 'Unknown Site')),
-            "Suitability": round(final_score, 4),
-            "Confidence": round(conf_score, 2),
-            "Alerts": alert_str,
-            "lat": site.get('lat', None),
-            "lon": site.get('lon', None)
-        }
-        
-        for p in params_config.keys():
-            res_dict[f"{p} Fit"] = site_fits.get(p, "Off/NA")
-            res_dict[f"{p} Rel"] = site_rels.get(p, "Off/NA")
-            
-        results.append(res_dict)
+    # Equal weights baseline
+    user_weights = {p: info["default_weight"] for p, info in PARAMS_CONFIG.items()}
 
-    res_df = pd.DataFrame(results).sort_values("Suitability", ascending=False).reset_index(drop=True)
-    res_df.index += 1 
+    matrix = build_suitability_matrix(analogues_df, targets_df, user_weights)
+    print("Suitability matrix shape:", matrix.shape)
+    print(f"Sites: {matrix.shape[0]}, Target environments: {matrix.shape[1]}")
 
-    st.session_state['res_df'] = res_df
-    st.session_state['target_env'] = target_env
+    render_heatmap(matrix, OUTPUT_PATH, weights_label="equal weighting")
 
-# --- 7. RESULTS DASHBOARD ---
-if 'res_df' in st.session_state:
-    res_df = st.session_state['res_df']
-    
-    st.subheader("🏆 Site Rankings")
-    
-    display_cols = ['Site', 'Suitability', 'Confidence', 'Alerts']
-    st.dataframe(
-        res_df.head(5)[display_cols].style.background_gradient(subset=['Suitability'], cmap="Blues"), 
-        use_container_width=True
-    )
-    
-    with st.expander("View all sites"):
-        st.dataframe(res_df[display_cols], use_container_width=True)
-        
-    st.divider()
-    
-    st.subheader("🔍 Detailed Site Profile")
-    selected_site = st.selectbox("Select a site to inspect:", res_df['Site'].tolist())
-    
-    site_data = res_df[res_df['Site'] == selected_site].iloc[0]
-    
-    # Dynamic Verdict Extraction
-    strong, mod, weak = [], [], []
-    for p in active_params:
-        try:
-            val = float(site_data[f"{p} Fit"])
-            if val >= 0.7: strong.append(p)
-            elif val >= 0.4: mod.append(p)
-            else: weak.append(p)
-        except (ValueError, TypeError):
-            pass # Ignore strings or N/A
-    
-    verdict = f"**{selected_site}** is an analogue match of **{site_data['Suitability']*100:.1f}%**. "
-    if strong: verdict += f"It scores strongly on {', '.join(strong)}. "
-    if mod: verdict += f"It scores moderately on {', '.join(mod)}. "
-    if weak: verdict += f"It has weaker fidelity regarding {', '.join(weak)}."
-    
-    st.info(verdict)
-    
-    # --- Full-Width Radar Chart ---
-    st.write("### Radar Footprint")
-    categories = active_params
-    
-    # Radar Chart Extraction
-    r_vals = []
-    for p in categories:
-        try:
-            r_vals.append(float(site_data[f"{p} Fit"]))
-        except (ValueError, TypeError):
-            r_vals.append(0.0) # Flatline missing data to prevent crash
-    
-    fig_radar = go.Figure()
-    fig_radar.add_trace(go.Scatterpolar(r=[1]*len(categories), theta=categories, fill='toself', name='Target', line_color='gold'))
-    fig_radar.add_trace(go.Scatterpolar(r=r_vals, theta=categories, fill='toself', name=selected_site, line_color='cyan'))
-    
-    fig_radar.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])), 
-        showlegend=True, 
-        height=550, 
-        margin=dict(t=40, b=40, l=40, r=40)
-    )
-    st.plotly_chart(fig_radar, use_container_width=True, key="radar")
+    # Also save the raw matrix for reproducibility / further analysis
+    matrix.to_csv("heatmap_sites_x_targets.csv")
+    print("Matrix saved to: heatmap_sites_x_targets.csv")
 
-    st.divider()
 
-    # --- Two Panes Below ---
-    c_left, c_right = st.columns(2)
-    
-    with c_left:
-        st.write("### Parameter Breakdown")
-        breakdown_data = []
-        for p in active_params:
-            breakdown_data.append({
-                "Parameter": p,
-                "Fidelity": site_data[f"{p} Fit"],
-                "Data Quality": site_data[f"{p} Rel"]
-            })
-        st.dataframe(pd.DataFrame(breakdown_data), use_container_width=True, hide_index=True)
-
-    with c_right:
-        st.write("### Site Location")
-        try:
-            lat_val = float(site_data['lat'])
-            lon_val = float(site_data['lon'])
-            
-            if pd.notna(lat_val) and pd.notna(lon_val):
-                map_df = pd.DataFrame({"lat": [lat_val], "lon": [lon_val], "Site": [selected_site]})
-                fig_map = px.scatter_geo(map_df, lat="lat", lon="lon", hover_name="Site", projection="natural earth")
-                fig_map.update_traces(marker=dict(size=12, color="red"))
-                fig_map.update_geos(showcountries=True, countrycolor="RebeccaPurple")
-                fig_map.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_map, use_container_width=True, key="map")
-            else:
-                st.warning("No coordinate data available for this site.")
-        except (ValueError, TypeError):
-            st.warning("Coordinate data (lat/lon) is missing or improperly formatted.")
+if __name__ == "__main__":
+    main()
